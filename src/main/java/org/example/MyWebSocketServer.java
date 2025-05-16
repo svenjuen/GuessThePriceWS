@@ -12,11 +12,17 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MyWebSocketServer extends WebSocketServer {
+    // Spielerdaten: ID -> Player-Objekt
     private final Map<String, Player> players = new ConcurrentHashMap<>();
+    // Aktive Verbindungen: WebSocket -> Spieler-ID
     private final Map<WebSocket, String> connections = new ConcurrentHashMap<>();
+    // Liste aller verfügbaren Rate-Artikel
     private final List<Item> items = new ArrayList<>();
+    // Aktueller Spielzustand
     private GameState gameState = new GameState();
+    // Timer-Service für unsere Countdowns
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+    // Referenz auf den aktuellen Timer-Task
     private ScheduledFuture<?> currentTask;
 
     public MyWebSocketServer(int port) {
@@ -24,33 +30,34 @@ public class MyWebSocketServer extends WebSocketServer {
         initializeItems();
     }
 
+    // Initialisiert die Artikel zum Raten
     private void initializeItems() {
         items.add(new Item("1", "Smartphone", "Neuwertiges Smartphone, 128GB Speicher", 1099.99, "phone.jpg"));
         items.add(new Item("2", "Kaffeemaschine", "Premium Kaffeemaschine mit Milchaufschäumer", 449.50, "coffee.jpg"));
         items.add(new Item("3", "Bürostuhl", "Ergonomischer Bürostuhl, schwarz", 389.00, "chair.jpg"));
         items.add(new Item("4", "Kopfhörer", "Noise-Cancelling Kopfhörer", 179.99, "headphones.jpg"));
-        items.add(new Item("5", "Fahrrad", "Mountainbike, 21 Gänge", 1349.00, "bike.jpg"));
+        items.add(new Item("5", "Fahrrad", "Mountainbike", 1349.00, "bike.jpg"));
     }
 
     @Override
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
-        System.out.println("New connection: " + conn.getRemoteSocketAddress());
-        connections.put(conn, null);
+        System.out.println("Neue Verbindung: " + conn.getRemoteSocketAddress());
+        connections.put(conn, null); // Spieler-ID wird später bei "join" gesetzt
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
-        System.out.println("Connection closed: " + conn.getRemoteSocketAddress());
+        System.out.println("Verbindung getrennt: " + conn.getRemoteSocketAddress());
         String playerId = connections.remove(conn);
         if (playerId != null) {
             players.remove(playerId);
-            broadcastPlayersUpdate();
+            broadcastPlayersUpdate(); // Alle über Spieleraustritt informieren
         }
     }
 
     @Override
     public void onMessage(WebSocket conn, String message) {
-        System.out.println("Received message: " + message);
+        System.out.println("Nachricht erhalten: " + message);
         try {
             JsonObject json = JsonParser.parseString(message).getAsJsonObject();
             String type = json.get("type").getAsString();
@@ -67,11 +74,12 @@ public class MyWebSocketServer extends WebSocketServer {
                     break;
             }
         } catch (Exception e) {
-            System.err.println("Error processing message: " + message);
+            System.err.println("Fehler bei Nachrichtenverarbeitung: " + message);
             e.printStackTrace();
         }
     }
 
+    // Behandelt neue Spieler
     private void handleJoin(WebSocket conn, String name) {
         String playerId = UUID.randomUUID().toString();
         Player player = new Player(playerId, name, conn);
@@ -79,9 +87,9 @@ public class MyWebSocketServer extends WebSocketServer {
         connections.put(conn, playerId);
         conn.send(String.format("{\"type\":\"welcome\",\"playerId\":\"%s\"}", playerId));
         broadcastPlayersUpdate();
-        System.out.println("Player joined: " + name);
     }
 
+    // Aktualisiert die Spielerliste für alle Clients
     private void broadcastPlayersUpdate() {
         JsonArray playersArray = new JsonArray();
         players.values().forEach(p -> {
@@ -98,30 +106,33 @@ public class MyWebSocketServer extends WebSocketServer {
         broadcast(message.toString());
     }
 
+    // Startet ein neues Spiel
     private void startGame() {
         if (gameState.isRunning) return;
 
         gameState = new GameState();
         gameState.isRunning = true;
         gameState.players = new ArrayList<>(players.values());
-
         nextRound();
     }
 
+    // Beginnt eine neue Runde
     private void nextRound() {
-        cancelCurrentTask();
+        cancelCurrentTask(); // Sicherstellen dass kein Timer läuft
 
         if (items.isEmpty()) {
             endGame();
             return;
         }
 
+        // Zufälligen Artikel auswählen
         Item item = items.remove(new Random().nextInt(items.size()));
         gameState.currentItem = item;
         gameState.phase = "showing";
-        gameState.timeRemaining = 5;
+        gameState.timeRemaining = 5; // 5 Sekunden Anzeigezeit
         broadcastGameState();
 
+        // Countdown für Anzeige-Phase starten
         currentTask = scheduler.scheduleAtFixedRate(() -> {
             gameState.timeRemaining--;
             broadcastGameState();
@@ -133,11 +144,13 @@ public class MyWebSocketServer extends WebSocketServer {
         }, 1, 1, TimeUnit.SECONDS);
     }
 
+    // Startet die Raterunde
     private void startGuessingPhase() {
         gameState.phase = "guessing";
-        gameState.timeRemaining = 30;
+        gameState.timeRemaining = 20; // 20 Sekunden zum Raten
         broadcastGameState();
 
+        // Countdown für Rate-Phase
         currentTask = scheduler.scheduleAtFixedRate(() -> {
             gameState.timeRemaining--;
             broadcastGameState();
@@ -149,16 +162,19 @@ public class MyWebSocketServer extends WebSocketServer {
         }, 1, 1, TimeUnit.SECONDS);
     }
 
+    // Zeigt die Ergebnisse an
     private void showResults() {
         gameState.phase = "results";
-        gameState.timeRemaining = 10;
+        gameState.timeRemaining = 10; // 10 Sekunden Ergebnis-Anzeige
         broadcastGameState();
 
+        // Timer für nächste Runde
         currentTask = scheduler.schedule(() -> {
             nextRound();
         }, 10, TimeUnit.SECONDS);
     }
 
+    // Beendet den aktuellen Timer-Task
     private void cancelCurrentTask() {
         if (currentTask != null) {
             currentTask.cancel(false);
@@ -166,27 +182,32 @@ public class MyWebSocketServer extends WebSocketServer {
         }
     }
 
+    // Verarbeitet eine Preis-Schätzung
     private void handleGuess(WebSocket conn, double guess) {
         String playerId = connections.get(conn);
         if (playerId != null) {
             Player player = players.get(playerId);
             if (player != null) {
                 player.currentGuess = guess;
+                // Differenz zum echten Preis berechnen
                 player.lastDiff = Math.abs(guess - gameState.currentItem.price);
+                // Punkte vergeben (100 Punkte minus prozentuale Abweichung)
                 player.score += Math.max(0, 100 - (int)(player.lastDiff / gameState.currentItem.price * 100));
                 broadcastPlayersUpdate();
             }
         }
     }
 
+    // Beendet das Spiel
     private void endGame() {
         cancelCurrentTask();
         gameState.isRunning = false;
         gameState.phase = "waiting";
         broadcastGameState();
-        initializeItems();
+        initializeItems(); // Artikel zurücksetzen für neues Spiel
     }
 
+    // Sendet den aktuellen Spielzustand an alle
     private void broadcastGameState() {
         JsonObject stateJson = new JsonObject();
         stateJson.addProperty("type", "update");
@@ -222,28 +243,32 @@ public class MyWebSocketServer extends WebSocketServer {
 
     @Override
     public void onError(WebSocket conn, Exception ex) {
+        System.err.println("WebSocket-Fehler:");
         ex.printStackTrace();
     }
 
     @Override
     public void onStart() {
-        System.out.println("WebSocket server started successfully! :)");
+        System.out.println("Server gestartet auf Port " + getPort());
     }
 
     @Override
     public void stop() throws InterruptedException {
         cancelCurrentTask();
-        scheduler.shutdown();
-        super.stop();
+        scheduler.shutdown(); // Threadpool sauber beenden
+        super.stop(); // WebSocket-Server stoppen
     }
 
+    // --- Datenklassen ---
+
+    // Speichert Spielerdaten
     static class Player {
         String id;
         String name;
         WebSocket connection;
         int score = 0;
         double currentGuess = 0;
-        Double lastDiff = null;
+        Double lastDiff = null; // Wie weit der letzte Tipp daneben lag
 
         Player(String id, String name, WebSocket connection) {
             this.id = id;
@@ -252,12 +277,13 @@ public class MyWebSocketServer extends WebSocketServer {
         }
     }
 
+    // Beschreibt einen Artikel zum Raten
     static class Item {
         String id;
         String name;
         String description;
-        double price;
-        String image;
+        double price; // Der zu erratende Preis
+        String image; // Bild-URL
 
         Item(String id, String name, String description, double price, String image) {
             this.id = id;
@@ -268,11 +294,12 @@ public class MyWebSocketServer extends WebSocketServer {
         }
     }
 
+    // Hält den aktuellen Spielzustand
     static class GameState {
         boolean isRunning = false;
-        String phase = "waiting";
+        String phase = "waiting"; // waiting|showing|guessing|results
         int timeRemaining = 0;
-        Item currentItem = null;
-        List<Player> players = new ArrayList<>();
+        Item currentItem = null; // Aktuell angezeigter Artikel
+        List<Player> players = new ArrayList<>(); // Aktive Spieler
     }
 }
