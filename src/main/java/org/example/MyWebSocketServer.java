@@ -268,7 +268,7 @@ public class MyWebSocketServer extends WebSocketServer {
         WebSocket connection;
         int score = 0;
         double currentGuess = 0;
-        Double lastDiff = null; // Wie weit der letzte Tipp daneben lag
+        Double lastDiff = null; // wie weit der letzte guess daneben lag
 
         Player(String id, String name, WebSocket connection) {
             this.id = id;
