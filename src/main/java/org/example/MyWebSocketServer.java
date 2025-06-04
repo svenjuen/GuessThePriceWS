@@ -113,12 +113,17 @@ public class MyWebSocketServer extends WebSocketServer {
         gameState = new GameState();
         gameState.isRunning = true;
         gameState.players = new ArrayList<>(players.values());
+        players.values().forEach(player -> {
+                    player.score = 0; // Punkte werden bei Spielstart auf 0 gesetzt
+                }
+        );
+
         nextRound();
     }
 
     // Beginnt eine neue Runde
     private void nextRound() {
-        cancelCurrentTask(); // Sicherstellen dass kein Timer läuft
+        cancelCurrentTask(); // Sicherstellen, dass kein Timer läuft
 
         if (items.isEmpty()) {
             endGame();
@@ -128,25 +133,7 @@ public class MyWebSocketServer extends WebSocketServer {
         // Zufälligen Artikel auswählen
         Item item = items.remove(new Random().nextInt(items.size()));
         gameState.currentItem = item;
-        gameState.phase = "showing";
-        gameState.timeRemaining = 5; // 5 Sekunden Anzeigezeit
-        broadcastGameState();
-
-        // Countdown für Anzeige-Phase starten
-        currentTask = scheduler.scheduleAtFixedRate(() -> {
-            gameState.timeRemaining--;
-            broadcastGameState();
-
-            if (gameState.timeRemaining <= 0) {
-                cancelCurrentTask();
-                startGuessingPhase();
-            }
-        }, 1, 1, TimeUnit.SECONDS);
-    }
-
-    // Startet die Raterunde
-    private void startGuessingPhase() {
-        gameState.phase = "guessing";
+        gameState.phase = "guessing"; // Direkt zur Rate-Phase wechseln
         gameState.timeRemaining = 20; // 20 Sekunden zum Raten
         broadcastGameState();
 
@@ -169,24 +156,29 @@ public class MyWebSocketServer extends WebSocketServer {
             if (player.currentGuess > 0) {
                 double diff = Math.abs(player.currentGuess - gameState.currentItem.price);
                 player.lastDiff = diff;
-                int points = Math.max(0, 100 - (int)(diff / gameState.currentItem.price * 100));
+                int points = (int)(1000 * Math.exp(-diff / gameState.currentItem.price));
                 player.score += points; // Punkte werden zu den bestehenden addiert
             }
         });
 
         gameState.phase = "results";
-        gameState.timeRemaining = 10;
-        broadcastGameState();
-        broadcastPlayersUpdate();
+        gameState.timeRemaining = 10; // Set initial timeRemaining for results phase
+        broadcastGameState(); // Broadcast initial state
 
-        currentTask = scheduler.schedule(() -> {   // in einem scheduler kann man definieren was passieren soll nach welcher Zeit
-            // currentGuess für nächste Runde zurücksetzen
-            players.values().forEach(player -> {
-                player.currentGuess = 0;
-                player.lastDiff = null; // lastDiff zurücksetzen für saubere Anzeige
-            });
-            nextRound();
-        }, 10, TimeUnit.SECONDS);
+        // Countdown for results phase
+        currentTask = scheduler.scheduleAtFixedRate(() -> {
+            gameState.timeRemaining--;
+            broadcastGameState(); // Broadcast updated timeRemaining
+
+            if (gameState.timeRemaining <= 0) {
+                cancelCurrentTask();
+                players.values().forEach(player -> {
+                    player.currentGuess = 0;
+                    player.lastDiff = null; // Reset for next round
+                });
+                nextRound(); // Start next round
+            }
+        }, 1, 1, TimeUnit.SECONDS);
     }
 
     // Beendet den aktuellen Timer-Task
@@ -313,7 +305,7 @@ public class MyWebSocketServer extends WebSocketServer {
     // Hält den aktuellen Spielzustand
     static class GameState {
         boolean isRunning = false;
-        String phase = "waiting"; // waiting|showing|guessing|results
+        String phase = "waiting"; // waiting|guessing|results
         int timeRemaining = 0;
         Item currentItem = null; // Aktuell angezeigter Artikel
         List<Player> players = new ArrayList<>(); // Aktive Spieler
