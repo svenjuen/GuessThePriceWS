@@ -164,12 +164,27 @@ public class MyWebSocketServer extends WebSocketServer {
 
     // Zeigt die Ergebnisse an
     private void showResults() {
-        gameState.phase = "results";
-        gameState.timeRemaining = 10; // 10 Sekunden Ergebnis-Anzeige
-        broadcastGameState();
+        // Punkte berechnen für alle Spieler
+        players.values().forEach(player -> {
+            if (player.currentGuess > 0) {
+                double diff = Math.abs(player.currentGuess - gameState.currentItem.price);
+                player.lastDiff = diff;
+                int points = Math.max(0, 100 - (int)(diff / gameState.currentItem.price * 100));
+                player.score += points; // Punkte werden zu den bestehenden addiert
+            }
+        });
 
-        // Timer für nächste Runde
-        currentTask = scheduler.schedule(() -> {
+        gameState.phase = "results";
+        gameState.timeRemaining = 10;
+        broadcastGameState();
+        broadcastPlayersUpdate();
+
+        currentTask = scheduler.schedule(() -> {   // in einem scheduler kann man definieren was passieren soll nach welcher Zeit
+            // currentGuess für nächste Runde zurücksetzen
+            players.values().forEach(player -> {
+                player.currentGuess = 0;
+                player.lastDiff = null; // lastDiff zurücksetzen für saubere Anzeige
+            });
             nextRound();
         }, 10, TimeUnit.SECONDS);
     }
@@ -184,15 +199,16 @@ public class MyWebSocketServer extends WebSocketServer {
 
     // Verarbeitet eine Preis-Schätzung
     private void handleGuess(WebSocket conn, double guess) {
+        if (!gameState.phase.equals("guessing")) {
+            return; // Nur während der Guessing-Phase erlauben
+        }
+
         String playerId = connections.get(conn);
         if (playerId != null) {
             Player player = players.get(playerId);
             if (player != null) {
+                // Spieler kann seine Schätzung beliebig oft ändern
                 player.currentGuess = guess;
-                // Differenz zum echten Preis berechnen
-                player.lastDiff = Math.abs(guess - gameState.currentItem.price);
-                // Punkte vergeben (100 Punkte minus prozentuale Abweichung)
-                player.score += Math.max(0, 100 - (int)(player.lastDiff / gameState.currentItem.price * 100));
                 broadcastPlayersUpdate();
             }
         }
