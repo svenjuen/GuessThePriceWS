@@ -162,21 +162,21 @@ public class MyWebSocketServer extends WebSocketServer {
         });
 
         gameState.phase = "results";
-        gameState.timeRemaining = 10; // Set initial timeRemaining for results phase
-        broadcastGameState(); // Broadcast initial state
+        gameState.timeRemaining = 10; // Timer für Ergebnisphase setzen
+        broadcastGameState(); // Alle derzeitigen Informationen an die Clients weiterleiten
 
         // Countdown for results phase
         currentTask = scheduler.scheduleAtFixedRate(() -> {
             gameState.timeRemaining--;
-            broadcastGameState(); // Broadcast updated timeRemaining
+            broadcastGameState(); // info weiterleiten für timeRemaining
 
             if (gameState.timeRemaining <= 0) {
                 cancelCurrentTask();
                 players.values().forEach(player -> {
                     player.currentGuess = 0;
-                    player.lastDiff = null; // Reset for next round
+                    player.lastDiff = null; // Reset für nächste Runde
                 });
-                nextRound(); // Start next round
+                nextRound(); // nächste Runde Starten
             }
         }, 1, 1, TimeUnit.SECONDS);
     }
