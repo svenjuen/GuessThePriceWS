@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  java-backend:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+
+  react-frontend:
+    build:
+      context: C:\Users\juens\Desktop\Schule\ITL\react_guesstheprice\price-guessing-game
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - java-backend
